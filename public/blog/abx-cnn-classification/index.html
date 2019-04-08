@@ -1,0 +1,310 @@
+<!DOCTYPE html> 
+<html lang="en"> 
+    <head> 
+        <meta charset="utf-8"> 
+        <meta http-equiv="X-UA-Compatible" content="IE=edge"> 
+        <meta name="viewport" content="width=device-width, initial-scale=1, shrink-to-fit=no"> 
+        <meta name="description" content=""> 
+        <meta name="author" content=""> 
+        <title>Classifying antibiotic skeletal structures with a convolutional neural network</title>         
+        <link rel="stylesheet" href="https://stackpath.bootstrapcdn.com/bootstrap/4.3.1/css/bootstrap.min.css" integrity="sha384-ggOyR0iXCbMQv3Xipma34MD+dH/1fQ784/j6cY/iJTQUOhcWr7x9JvoRxT2MZw1T" crossorigin="anonymous">
+        <link rel="stylesheet" href="/syntax.css">
+        <link rel="stylesheet" href="/style.css"> 
+    </head>     
+    <body> 
+        <div class="container"> 
+            <div class="row"> 
+                <div class="col-xs-12"> 
+                    <nav class="navbar navbar-expand-lg navbar-light"> 
+                        <a class="navbar-brand" href="/">Ryan Durk, MD</a> 
+                        <button class="navbar-toggler" type="button" data-toggle="collapse" data-target="#navbarToggler25" aria-controls="navbarTogglerDemo01" aria-expanded="false" aria-label="Toggle navigation"> 
+                            <span class="navbar-toggler-icon"></span> 
+                        </button>                         
+
+                        <div class="collapse navbar-collapse" id="navbarToggler25"> 
+                            <ul class="navbar-nav mr-auto mt-2 mt-lg-0"> 
+                                <li class="nav-item"> 
+                                    <a class="nav-link" href="/">Home <span class="sr-only">(current)</span></a> 
+                                </li>                                 
+
+                                <li class="nav-item active">
+                                    <a class="nav-link" href="/blog">Blog</a>
+                                </li>                                                                                                   
+                            </ul>                                                          
+                        </div>                         
+                    </nav>                     
+                </div>
+                <div class="col-xs-12 scroll_x"> 
+                    <section id="main">
+                        <h1 id="title">Classifying antibiotic skeletal structures with a convolutional neural network</h1>
+                            <article id="content">
+                            
+
+<p>The first task of <a href="https://www.fast.ai">fast.ai</a> is training a convolutional neuro network to classify images. We&rsquo;ll group antibiotics by their skeletal structure. The aim will be doing this as rapidly as possible to gain a working understanding of the concepts. We&rsquo;ll acknowledge some shortcomings once we see our model&rsquo;s failures. The data will be from <a href="https://pubchem.ncbi.nlm.nih.gov/classification/#hid=1">PubChem&rsquo;s Classification Browser</a> and we&rsquo;ll use <a href="https://docs.fast.ai/">the fast.ai library</a>, <a href="https://arxiv.org/abs/1512.03385">ResNet</a> and <a href="https://colab.research.google.com/">Google Colab</a>.</p>
+
+<h2 id="the-classes">The classes</h2>
+
+<p><a href="https://www.ncbi.nlm.nih.gov/pmc/articles/PMC3085877/">RM Coates et all</a> nicely lists antibiotic classes that will form our search on PubChem with some changes.* Ontologically speaking  &beta;-lactams encompass carbapenems and monobactams but those are listed as their own headers. We&rsquo;ll add penicillins and cephalosporins and remove &beta;-lactams as a classification. Ketolides are a subset of macrolides. The US spelling, and therefore MEsH spelling of sulphonamide is actually &ldquo;sulfanilamide,&rdquo; so we&rsquo;ll make that change as well.</p>
+
+<p>* The author found the list of antibiotics first and then MeSH. Since &ldquo;Anti-Bacterial Agents&rdquo; is a MeSH term, a more straightforward approach may be choosing categories directly from the <a href="https://meshb.nlm.nih.gov/record/ui?name=Anti-Bacterial%20Agents">MEsH browser</a>.</p>
+
+<p>Our antibiotic classes:</p>
+
+<ul>
+<li>Pencillins</li>
+<li>Cephalosporins</li>
+<li>&beta;-Lactamase inhibitors</li>
+<li>Carbapenems</li>
+<li>Monobactams</li>
+<li>Aminoglycosides</li>
+<li>Tetracyclines</li>
+<li>Rifamycins</li>
+<li>Macrolides</li>
+<li>Lincosamides</li>
+<li>Glycopeptides</li>
+<li>Lipopeptides</li>
+<li>Streptogramins</li>
+<li>Sulfanilamide</li>
+<li>Oxazolidinones</li>
+<li>Quinolones</li>
+</ul>
+
+<p>Searching PubChem by the class name gives us antibiotics in each group with some tweaks. Replace &lsquo;&beta;&rsquo; with &lsquo;beta&rsquo;, for instance. You&rsquo;ll find an option to download the entire MeSH grouping images at once. Extract those into individual directories named by their class name. The filenames should be something like ./aminoglycoside/816.png, where the number (816 in this case) is the PubChem CID. The CID is unique for each molecule.</p>
+
+<h2 id="data-munging">Data munging</h2>
+
+<p>Antibiotics can be members of multiple classes. Let&rsquo;s find which ones are.</p>
+<div class="highlight"><pre class="chroma"><code class="language-duplicates.py" data-lang="duplicates.py"><span class="kn">import</span> <span class="nn">os</span>
+<span class="kn">import</span> <span class="nn">re</span>
+<span class="kn">from</span> <span class="nn">pathlib</span> <span class="kn">import</span> <span class="n">Path</span>
+
+<span class="k">def</span> <span class="nf">duplicates_among_set_dict</span><span class="p">(</span><span class="n">set_dict</span><span class="p">):</span>
+    <span class="s2">&#34;&#34;&#34;Return a dict[keys] = values such that keys are duplicate set values and values
+</span><span class="s2">        are duplicate keys
+</span><span class="s2">
+</span><span class="s2">    &gt;&gt;&gt; no_dups = no_dups = {&#39;a&#39;: {1}, &#39;b&#39;: {2}, &#39;c&#39;: {3}}
+</span><span class="s2">    &gt;&gt;&gt; some_dups = {&#39;a&#39;: {1, 2, 3}, &#39;b&#39;: {3, 4, 5}, &#39;c&#39;: {3, 5, 6}, &#39;d&#39;: {1, 2}}
+</span><span class="s2">    &gt;&gt;&gt; duplicates_among_set_dict(no_dups)
+</span><span class="s2">    {}
+</span><span class="s2">    &gt;&gt;&gt; duplicates_among_set_dict(some_dups)
+</span><span class="s2">    {1: [&#39;a&#39;, &#39;d&#39;], 2: [&#39;a&#39;, &#39;d&#39;], 3: [&#39;a&#39;, &#39;b&#39;, &#39;c&#39;], 5: [&#39;b&#39;, &#39;c&#39;]}
+</span><span class="s2">    &#34;&#34;&#34;</span>
+
+    <span class="n">keylist</span> <span class="o">=</span> <span class="nb">list</span><span class="p">(</span><span class="n">set_dict</span><span class="o">.</span><span class="n">keys</span><span class="p">())</span>
+
+    <span class="n">duplicates</span> <span class="o">=</span> <span class="nb">dict</span><span class="p">()</span>
+
+    <span class="k">for</span> <span class="n">i</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="nb">len</span><span class="p">(</span><span class="n">keylist</span><span class="p">)):</span>
+        <span class="n">primary_key</span> <span class="o">=</span> <span class="n">keylist</span><span class="p">[</span><span class="n">i</span><span class="p">]</span>
+
+        <span class="k">for</span> <span class="n">value</span> <span class="ow">in</span> <span class="n">set_dict</span><span class="p">[</span><span class="n">primary_key</span><span class="p">]:</span>
+            <span class="k">for</span> <span class="n">j</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="n">i</span><span class="o">+</span><span class="mi">1</span><span class="p">,</span> <span class="nb">len</span><span class="p">(</span><span class="n">keylist</span><span class="p">)):</span>
+                <span class="n">secondary_key</span> <span class="o">=</span> <span class="n">keylist</span><span class="p">[</span><span class="n">j</span><span class="p">]</span>
+
+                <span class="k">if</span> <span class="n">value</span> <span class="ow">in</span> <span class="n">set_dict</span><span class="p">[</span><span class="n">secondary_key</span><span class="p">]:</span>
+                    <span class="k">if</span> <span class="n">value</span> <span class="ow">in</span> <span class="n">duplicates</span><span class="p">:</span>
+                        <span class="k">if</span> <span class="n">secondary_key</span> <span class="ow">not</span> <span class="ow">in</span> <span class="n">duplicates</span><span class="p">[</span><span class="n">value</span><span class="p">]:</span>
+                            <span class="n">duplicates</span><span class="p">[</span><span class="n">value</span><span class="p">]</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">secondary_key</span><span class="p">)</span>
+                    <span class="k">else</span><span class="p">:</span>
+                        <span class="n">duplicates</span><span class="p">[</span><span class="n">value</span><span class="p">]</span> <span class="o">=</span> <span class="p">[</span><span class="n">primary_key</span><span class="p">,</span> <span class="n">secondary_key</span><span class="p">]</span>
+    
+    <span class="k">return</span> <span class="n">duplicates</span>
+
+<span class="n">data_directory</span> <span class="o">=</span> <span class="n">Path</span><span class="p">(</span><span class="s1">&#39;abx&#39;</span><span class="p">)</span>
+<span class="n">class_dirs</span> <span class="o">=</span> <span class="n">os</span><span class="o">.</span><span class="n">listdir</span><span class="p">(</span><span class="n">data_directory</span><span class="p">)</span>
+<span class="n">abx</span> <span class="o">=</span> <span class="nb">dict</span><span class="p">()</span>
+<span class="k">for</span> <span class="n">class_dir</span> <span class="ow">in</span> <span class="n">class_dirs</span><span class="p">:</span>
+    <span class="n">abx</span><span class="p">[</span><span class="nb">str</span><span class="p">(</span><span class="n">class_dir</span><span class="p">)]</span> <span class="o">=</span> <span class="nb">set</span><span class="p">(</span><span class="n">os</span><span class="o">.</span><span class="n">listdir</span><span class="p">(</span><span class="n">data_directory</span><span class="o">/</span><span class="n">class_dir</span><span class="p">))</span>
+
+<span class="n">duplicates</span> <span class="o">=</span> <span class="n">duplicates_among_set_dict</span><span class="p">(</span><span class="n">abx</span><span class="p">)</span></code></pre></div>
+<p>We may need duplicates_among_set_dict&rsquo;s functionality in a future model, so it&rsquo;s made into a function. There are a little over 100 duplicates, most belonging to just 2 groups. Not surprisingly, many &beta;-lactamase inhibitors fall under pencillins as &beta;-lactamase obviously binds both &beta;-lactams and &beta;-lactamase inhibitors&ndash; they should have similar structures. For this group, we&rsquo;ll remove the penicillin classification since they are primarily clinically useful as &beta;-lactamases.</p>
+<div class="highlight"><pre class="chroma"><code class="language-duplicates.py" data-lang="duplicates.py"><span class="k">for</span> <span class="n">dup</span><span class="p">,</span> <span class="n">dup_classes</span> <span class="ow">in</span> <span class="n">duplicates</span><span class="o">.</span><span class="n">items</span><span class="p">():</span>
+    <span class="k">if</span> <span class="s1">&#39;beta-lactamase inhibitors&#39;</span> <span class="ow">in</span> <span class="n">dup_classes</span><span class="p">:</span>
+        <span class="k">for</span> <span class="n">dup_class</span> <span class="ow">in</span> <span class="n">dup_classes</span><span class="p">:</span>
+            <span class="k">if</span> <span class="n">dup_class</span> <span class="o">!=</span> <span class="s1">&#39;beta-lactamase inhibitors&#39;</span><span class="p">:</span>
+                <span class="n">os</span><span class="o">.</span><span class="n">remove</span><span class="p">(</span><span class="n">f</span><span class="s1">&#39;abx/{dup_class}/{dup}&#39;</span><span class="p">)</span></code></pre></div>
+<p>That leaves 79 duplicate classifications. For those, the author went through PubChem&rsquo;s description page to manually assign what was felt to be the most clinically relevant class. These were saved in resolution.csv for reproducibility.</p>
+<div class="highlight"><pre class="chroma"><code class="language-duplicates.py" data-lang="duplicates.py"><span class="n">resolution_file</span> <span class="o">=</span> <span class="s1">&#39;resolution.csv&#39;</span>
+<span class="k">if</span> <span class="ow">not</span> <span class="n">os</span><span class="o">.</span><span class="n">path</span><span class="o">.</span><span class="n">isfile</span><span class="p">(</span><span class="n">resolution_file</span><span class="p">):</span>
+    <span class="k">with</span> <span class="nb">open</span><span class="p">(</span><span class="n">resolution_file</span><span class="p">,</span> <span class="s1">&#39;w&#39;</span><span class="p">)</span> <span class="k">as</span> <span class="n">fout</span><span class="p">:</span>
+        <span class="k">for</span> <span class="n">dup</span> <span class="ow">in</span> <span class="n">duplicates</span><span class="p">:</span>
+            <span class="n">cid</span> <span class="o">=</span> <span class="n">re</span><span class="o">.</span><span class="n">match</span><span class="p">(</span><span class="sa">r</span><span class="s1">&#39;(\d+)\.png&#39;</span><span class="p">,</span> <span class="n">dup</span><span class="p">)</span>
+            <span class="n">cid</span> <span class="o">=</span> <span class="n">cid</span><span class="o">.</span><span class="n">group</span><span class="p">(</span><span class="mi">1</span><span class="p">)</span>
+
+            <span class="k">print</span><span class="p">(</span><span class="n">f</span><span class="s2">&#34;https://pubchem.ncbi.nlm.nih.gov/{cid}&#34;</span><span class="p">)</span>
+            <span class="k">while</span> <span class="bp">True</span><span class="p">:</span>
+                <span class="n">cl</span> <span class="o">=</span> <span class="nb">input</span><span class="p">(</span><span class="s1">&#39;What class? &#39;</span><span class="p">)</span>
+
+                <span class="k">if</span> <span class="n">cl</span> <span class="ow">in</span> <span class="n">os</span><span class="o">.</span><span class="n">listdir</span><span class="p">(</span><span class="s1">&#39;abx&#39;</span><span class="p">):</span>
+                    <span class="k">break</span>
+                
+                <span class="k">if</span> <span class="n">cl</span> <span class="o">==</span> <span class="s1">&#39;NULL&#39;</span><span class="p">:</span>
+                    <span class="k">break</span>
+            
+            <span class="n">fout</span><span class="o">.</span><span class="n">write</span><span class="p">(</span><span class="n">f</span><span class="s1">&#39;{cid},{cl}</span><span class="se">\n</span><span class="s1">&#39;</span><span class="p">)</span>
+<span class="k">else</span><span class="p">:</span>
+    <span class="k">with</span> <span class="nb">open</span><span class="p">(</span><span class="n">resolution_file</span><span class="p">)</span> <span class="k">as</span> <span class="n">fin</span><span class="p">:</span>
+        <span class="k">for</span> <span class="n">line</span> <span class="ow">in</span> <span class="n">fin</span><span class="p">:</span>
+            <span class="n">line</span> <span class="o">=</span> <span class="n">line</span><span class="o">.</span><span class="n">strip</span><span class="p">()</span>
+            <span class="n">cid</span><span class="p">,</span> <span class="n">correct_class</span><span class="o">=</span> <span class="n">line</span><span class="o">.</span><span class="n">split</span><span class="p">(</span><span class="s1">&#39;,&#39;</span><span class="p">)</span>
+
+            <span class="k">if</span> <span class="n">cid</span> <span class="ow">in</span> <span class="n">duplicates</span><span class="p">:</span>
+                <span class="k">for</span> <span class="n">dup_class</span> <span class="ow">in</span> <span class="n">duplicates</span><span class="p">[</span><span class="n">cid</span><span class="o">+</span><span class="s1">&#39;.png&#39;</span><span class="p">]:</span>
+                    <span class="k">if</span> <span class="n">dup_class</span> <span class="o">!=</span> <span class="n">correct_class</span><span class="p">:</span>
+                        <span class="n">os</span><span class="o">.</span><span class="n">remove</span><span class="p">(</span><span class="n">f</span><span class="s1">&#39;abx/{dup_class}/{cid}.png&#39;</span><span class="p">)</span></code></pre></div>
+<p>Upon individual inspection, perhaps <sup>2</sup>&frasl;<sub>3</sub> of the classifications were easily resolved and the rest were irrelevant to our model and therefore removed. For instance, some CIDs refer to a mixture of antibiotics, which becomes an issue when multiple ones from different classes are in the same picture.</p>
+
+<h2 id="the-model">The model</h2>
+
+<p>We&rsquo;ll start with these lines taken from the fast.ai Lecture 1 notebook&ndash;</p>
+<div class="highlight"><pre class="chroma"><code class="language-model.py" data-lang="model.py"><span class="o">%</span><span class="n">reload_ext</span> <span class="n">autoreload</span>
+<span class="o">%</span><span class="n">autoreload</span> <span class="mi">2</span>
+<span class="o">%</span><span class="n">matplotlib</span> <span class="n">inline</span>
+<span class="kn">from</span> <span class="nn">fastai.vision</span> <span class="kn">import</span> <span class="o">*</span>
+<span class="kn">from</span> <span class="nn">fastai.metrics</span> <span class="kn">import</span> <span class="n">error_rate</span>
+<span class="n">bs</span> <span class="o">=</span> <span class="mi">64</span></code></pre></div>
+<p>Our first change is simply pointing path to wherever we&rsquo;re storing the data files. The author uploaded them to Google Drive. You could also tar them and put them online, using the untar function included in the fast ai library. Unfortunately you can&rsquo;t simply scp into a Google Colab notebook. pat is a regex that when applied to the image path gives the ImageDataBunch.from_name_re factory method a grouping with the class name of each image:</p>
+<div class="highlight"><pre class="chroma"><code class="language-model.py" data-lang="model.py"><span class="kn">from</span> <span class="nn">google.colab</span> <span class="kn">import</span> <span class="n">drive</span>
+<span class="n">drive</span><span class="o">.</span><span class="n">mount</span><span class="p">(</span><span class="s1">&#39;/content/gdrive&#39;</span><span class="p">)</span>
+
+<span class="kn">from</span> <span class="nn">pathlib</span> <span class="kn">import</span> <span class="n">Path</span>
+<span class="kn">import</span> <span class="nn">os</span>
+
+<span class="n">path</span> <span class="o">=</span> <span class="n">Path</span><span class="p">(</span><span class="s1">&#39;/content/gdrive/My Drive/abx&#39;</span><span class="p">)</span>
+<span class="n">fnames</span> <span class="o">=</span> <span class="p">[]</span>
+<span class="k">for</span> <span class="n">abx_path</span> <span class="ow">in</span> <span class="n">path</span><span class="o">.</span><span class="n">ls</span><span class="p">():</span>
+  <span class="k">if</span> <span class="n">os</span><span class="o">.</span><span class="n">path</span><span class="o">.</span><span class="n">split</span><span class="p">(</span><span class="n">abx_path</span><span class="p">)[</span><span class="mi">1</span><span class="p">]</span> <span class="ow">not</span> <span class="ow">in</span> <span class="p">[</span><span class="s1">&#39;models&#39;</span><span class="p">]:</span> <span class="c1">#exclude these directories</span>
+    <span class="n">fnames</span><span class="o">.</span><span class="n">extend</span><span class="p">(</span><span class="n">abx_path</span><span class="o">.</span><span class="n">ls</span><span class="p">())</span>
+<span class="n">pat</span> <span class="o">=</span> <span class="sa">r</span><span class="s1">&#39;/([^/]+)/\d+.png$&#39;</span></code></pre></div>
+<p>Below, np.random.seed(2) is unexplained in the fast.ai lecture. It may help ImageDataBunch to produce reproducible learning and training sets. 224 is a magic number, of which we&rsquo;re told will be explained in a later lecture. It is the length of a square such that 224 = 7 * 2**n. get_transforms() resizes our images to 224x224 squares, in keeping with that magic length. bs is a batchsize, 64 works well enough for our colab GPU. I&rsquo;m not sure if normalization adds much here considering the images already have consistent, high-contrast features, but we&rsquo;ll do that anyway and evaluate the resulting images.</p>
+<div class="highlight"><pre class="chroma"><code class="language-model.py" data-lang="model.py"><span class="n">np</span><span class="o">.</span><span class="n">random</span><span class="o">.</span><span class="n">seed</span><span class="p">(</span><span class="mi">2</span><span class="p">)</span>
+<span class="n">data</span> <span class="o">=</span> <span class="n">ImageDataBunch</span><span class="o">.</span><span class="n">from_name_re</span><span class="p">(</span><span class="n">path</span><span class="p">,</span> <span class="n">fnames</span><span class="p">,</span> <span class="n">pat</span><span class="p">,</span> <span class="n">ds_tfms</span><span class="o">=</span><span class="n">get_transforms</span><span class="p">(),</span> <span class="n">size</span><span class="o">=</span><span class="mi">224</span><span class="p">,</span> <span class="n">bs</span><span class="o">=</span><span class="n">bs</span>
+                                  <span class="p">)</span><span class="o">.</span><span class="n">normalize</span><span class="p">(</span><span class="n">imagenet_stats</span><span class="p">)</span>
+<span class="n">data</span><span class="o">.</span><span class="n">show_batch</span><span class="p">(</span><span class="n">rows</span><span class="o">=</span><span class="mi">3</span><span class="p">,</span> <span class="n">figsize</span><span class="o">=</span><span class="p">(</span><span class="mi">7</span><span class="p">,</span><span class="mi">6</span><span class="p">))</span></code></pre></div>
+<p>Calling show_batch on our ImageDataBunch object gives us the below image. We see 9 structures, each correctly classified and entirely contained in the transformaed image. Far from perfect, these post-transformation images have artifacts making it difficult to see larger structures. We also have some extraneous information in these images, like salts and even other large molecules. Those could be filtered programmatically, or by using another image source (PubChem stores many mixtures of images). But, looking at the pencillin for instance, we can clearly see a &beta;-lactam ring with its requisite 4-member square shape containing an amide group (red oxygen, carbon, blue nitrogen motif). So, there&rsquo;s probably enough information in these images for proper classification. In all, we could do some data-cleaning and find better images (ideally we&rsquo;d just create 224x224 square images exactly instead of downloading high-quality ones from PubChem and then shrinking those). But we&rsquo;re aiming for proof-of-concept more than, say, creating a production model, so let&rsquo;s continue as is.
+<figure class="center_text">
+    <img src="/lec_1_show_batch.png"
+         alt="data.show_batch"/> 
+</figure>
+</p>
+<div class="highlight"><pre class="chroma"><code class="language-model.py" data-lang="model.py"><span class="n">learn</span> <span class="o">=</span> <span class="n">cnn_learner</span><span class="p">(</span><span class="n">data</span><span class="p">,</span> <span class="n">models</span><span class="o">.</span><span class="n">resnet34</span><span class="p">,</span> <span class="n">metrics</span><span class="o">=</span><span class="n">error_rate</span><span class="p">)</span>
+<span class="n">learn</span><span class="o">.</span><span class="n">fit_one_cycle</span><span class="p">(</span><span class="mi">4</span><span class="p">)</span></code></pre></div>
+<p>We&rsquo;re using ResNet 34. Obviosuly we could use 50 or higher, but we&rsquo;ll stick to our goal of proof-of-concept.</p>
+
+<table>
+<thead>
+<tr>
+<th>epoch</th>
+<th>train_loss</th>
+<th>valid_loss</th>
+<th>error_rate</th>
+<th>time</th>
+</tr>
+</thead>
+
+<tbody>
+<tr>
+<td>0</td>
+<td>1.456029</td>
+<td>0.625639</td>
+<td>0.187248</td>
+<td>23:28</td>
+</tr>
+
+<tr>
+<td>1</td>
+<td>0.790583</td>
+<td>0.462501</td>
+<td>0.137207</td>
+<td>01:13</td>
+</tr>
+
+<tr>
+<td>2</td>
+<td>0.562697</td>
+<td>0.409061</td>
+<td>0.125908</td>
+<td>01:10</td>
+</tr>
+
+<tr>
+<td>3</td>
+<td>0.484117</td>
+<td>0.402371</td>
+<td>0.122680</td>
+<td>01:09</td>
+</tr>
+</tbody>
+</table>
+
+<p>Ok, pretty good. The default learning rate and loss function gave us a continously decreasing error_rate after 4 runs. The first run took 20x the time as subsequent ones.
+Let&rsquo;s look at our top-losses with the <a href="http://gradcam.cloudcv.org/">Grad-CAM heatmap</a>.</p>
+<div class="highlight"><pre class="chroma"><code class="language-model.py" data-lang="model.py"><span class="n">interp</span> <span class="o">=</span> <span class="n">ClassificationInterpretation</span><span class="o">.</span><span class="n">from_learner</span><span class="p">(</span><span class="n">learn</span><span class="p">)</span>
+<span class="n">interp</span><span class="o">.</span><span class="n">plot_top_losses</span><span class="p">(</span><span class="mi">9</span><span class="p">,</span> <span class="n">figsize</span><span class="o">=</span><span class="p">(</span><span class="mi">15</span><span class="p">,</span><span class="mi">11</span><span class="p">),</span> <span class="n">heatmap</span><span class="o">=</span><span class="bp">True</span><span class="p">)</span></code></pre></div>
+<p><figure class="center_text">
+    <img src="/lec_1_top_losses.png"
+         alt="Top losses after 1 iteration"/> 
+</figure>
+
+In four of the nine images the model seems unduly concerned with whitespace. It&rsquo;s unsurprising to see classification failures in those cases. On the other hand, the misclassified macrolide-aminoglycoside pairings look like they actually belong to both classes. And the calculated worst loss in the top left corner is actually correctly classified by our model as an aminoglycoside (our test data is incorrect in that case). Similarly, the 8th top loss (row 3, col 2) appears to be correctly classified by the mode. We see some trouble with tetracycline classification in two cases. The quinolone/macrolide molecule in the bottom-right has a bizarre structure, another unsurprising misclassification. It&rsquo;s hard to say, at this point, how much a role of orientation and positioning have on our model&rsquo;s prediction&ndash; could we be overfitting based on that? Perhaps better training/test sets would be randomized.</p>
+
+<p>We&rsquo;ve got many things we could test to improve with the input data at this point. It pains me to ignore them and keep moving, but we&rsquo;re going to stick to our goal of showing feasibility and not perfection. Let&rsquo;s refine the model a little bit, and finish things there so we can move on to the next <a href="https://www.fast.ai">fast.ai</a> lecture.</p>
+<div class="highlight"><pre class="chroma"><code class="language-model.py" data-lang="model.py"><span class="n">learn</span><span class="o">.</span><span class="n">lr_find</span><span class="p">()</span>
+<span class="n">learn</span><span class="o">.</span><span class="n">recorder</span><span class="o">.</span><span class="n">plot</span><span class="p">()</span></code></pre></div>
+<p><figure class="center_text">
+    <img src="/lec_1_lr.png"
+         alt="Learning rate loss graph"/> 
+</figure>
+
+Looks like our loss picks up with learning rates above 1e-3. So let&rsquo;s do a couple more runs with a max LR of 1e-6 to 1e-4. This happens to be the same learning rate chosen by Jeremy Howard during the fast.ai lecture, in which he also started with ResNet-34 to train image data.</p>
+<div class="highlight"><pre class="chroma"><code class="language-model.py" data-lang="model.py"><span class="n">learn</span><span class="o">.</span><span class="n">unfreeze</span><span class="p">()</span>
+<span class="n">learn</span><span class="o">.</span><span class="n">fit_one_cycle</span><span class="p">(</span><span class="mi">2</span><span class="p">,</span> <span class="n">max_lr</span><span class="o">=</span><span class="nb">slice</span><span class="p">(</span><span class="mf">1e-6</span><span class="p">,</span><span class="mf">1e-4</span><span class="p">))</span></code></pre></div>
+<table>
+<thead>
+<tr>
+<th>epoch</th>
+<th>train_loss</th>
+<th>valid_loss</th>
+<th>error_rate</th>
+<th>time</th>
+</tr>
+</thead>
+
+<tbody>
+<tr>
+<td>0</td>
+<td>0.281094</td>
+<td>0.270655</td>
+<td>0.073446</td>
+<td>01:15</td>
+</tr>
+
+<tr>
+<td>1</td>
+<td>0.259531</td>
+<td>0.262721</td>
+<td>0.072639</td>
+<td>01:15</td>
+</tr>
+</tbody>
+</table>
+
+<p>That&rsquo;s an improvement in error rate from before, but it looks like we&rsquo;re leveling out at 7.2ish%. How do our top losses look now?</p>
+<div class="highlight"><pre class="chroma"><code class="language-model.py" data-lang="model.py"><span class="n">interp</span> <span class="o">=</span> <span class="n">ClassificationInterpretation</span><span class="o">.</span><span class="n">from_learner</span><span class="p">(</span><span class="n">learn</span><span class="p">)</span>
+<span class="n">interp</span><span class="o">.</span><span class="n">plot_top_losses</span><span class="p">(</span><span class="mi">9</span><span class="p">,</span> <span class="n">figsize</span><span class="o">=</span><span class="p">(</span><span class="mi">15</span><span class="p">,</span><span class="mi">11</span><span class="p">),</span> <span class="n">heatmap</span><span class="o">=</span><span class="bp">True</span><span class="p">)</span></code></pre></div>
+<p><figure class="center_text">
+    <img src="/lec_1_top_losses_2nd.png"
+         alt="Final top losses"/> 
+</figure>
+
+Much better. Again, our worst loss is actually correctly classified by our model and just misclassified in the source data, as are the 4th (row 2, col 1) and 5th (row 2, col 2) top losses. Our heatmaps in the rest fit the molecules exactly&ndash; quite an improvement. We&rsquo;ll stop here, and move on to the next fast.ai lecture.</p>
+
+                            </article>
+                    </section>
+                </div>
+            </div>
+        </div>
+        <script src="https://code.jquery.com/jquery-3.3.1.slim.min.js" integrity="sha384-q8i/X+965DzO0rT7abK41JStQIAqVgRVzpbzo5smXKp4YfRvH+8abtTE1Pi6jizo" crossorigin="anonymous"></script>
+        <script src="https://stackpath.bootstrapcdn.com/bootstrap/4.3.1/js/bootstrap.min.js" integrity="sha384-JjSmVgyd0p3pXB1rRibZUAYoIIy6OrQ6VrjIEaFf/nJGzIxFDsf4x0xIM+B07jRM" crossorigin="anonymous"></script>
+    </body>
+</html>
