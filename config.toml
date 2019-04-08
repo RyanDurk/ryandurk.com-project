@@ -1,0 +1,6 @@
+baseURL = "https://ryandurk.com/"
+languageCode = "en-us"
+title = "Ryan Durk"
+theme = "r"
+pygmentsCodeFences = true
+pygmentsUseClasses = true
