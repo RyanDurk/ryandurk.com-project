@@ -131,7 +131,7 @@ from fastai.metrics import error_rate
 bs = 64
 ```
 
-Our first change is simply pointing path to wherever we're storing the data files. The author uploaded them to Google Drive. You could also tar them and put them online, using the untar function included in the fast ai library. Unfortunately you can't simply scp into a Google Colab notebook. pat is a regex that when applied to the image path gives the ImageDataBunch.from_name_re factory method a grouping with the class name of each image:
+Our first change is simply pointing path to wherever we're storing the data files. The author uploaded them to Google Drive. You could also tar them and put them online, using the untar function included in the fast ai library. Unfortunately, you can't simply scp into a Google Colab notebook. pat is a regex that when applied to the image path gives the ImageDataBunch.from_name_re factory method a grouping with the class name of each image:
 ```model.py
 from google.colab import drive
 drive.mount('/content/gdrive')
@@ -146,20 +146,20 @@ for abx_path in path.ls():
     fnames.extend(abx_path.ls())
 pat = r'/([^/]+)/\d+.png$'
 ```
-Below, np.random.seed(2) is unexplained in the fast.ai lecture. It may help ImageDataBunch to produce reproducible learning and training sets. 224 is a magic number, of which we're told will be explained in a later lecture. It is the length of a square such that 224 = 7 * 2**n. get_transforms() resizes our images to 224x224 squares, in keeping with that magic length. bs is a batchsize, 64 works well enough for our colab GPU. I'm not sure if normalization adds much here considering the images already have consistent, high-contrast features, but we'll do that anyway and evaluate the resulting images.
+Below, np.random.seed(2) ensured reproducible training and validation sets. 224 is a magic number, of which we're told will be explained in a later lecture. It is the length of a square such that 224 = 7 \* 2\*\*n. get_transforms() resizes our images to 224x224 squares, in keeping with that magic length. bs is a batchsize, 64 works well enough for our colab GPU. I'm not sure if normalization adds much here considering the images already have consistent, high-contrast features, but we'll do that anyway and evaluate the resulting images.
 ```model.py
 np.random.seed(2)
 data = ImageDataBunch.from_name_re(path, fnames, pat, ds_tfms=get_transforms(), size=224, bs=bs
                                   ).normalize(imagenet_stats)
 data.show_batch(rows=3, figsize=(7,6))
 ```
-Calling show_batch on our ImageDataBunch object gives us the below image. We see 9 structures, each correctly classified and entirely contained in the transformaed image. Far from perfect, these post-transformation images have artifacts making it difficult to see larger structures. We also have some extraneous information in these images, like salts and even other large molecules. Those could be filtered programmatically, or by using another image source (PubChem stores many mixtures of images). But, looking at the pencillin for instance, we can clearly see a &beta;-lactam ring with its requisite 4-member square shape containing an amide group (red oxygen, carbon, blue nitrogen motif). So, there's probably enough information in these images for proper classification. In all, we could do some data-cleaning and find better images (ideally we'd just create 224x224 square images exactly instead of downloading high-quality ones from PubChem and then shrinking those). But we're aiming for proof-of-concept more than, say, creating a production model, so let's continue as is.
+Calling show_batch on our ImageDataBunch object gives us the below image. We see 9 structures, each correctly classified and entirely contained in the transformed image. Far from perfect, these post-transformation images have artifacts making it difficult to see larger structures. We also have some extraneous information in these images, like salts and even other large molecules. Those could be filtered programmatically, or by using another image source (PubChem stores many mixtures of images). But, looking at the penicillin for instance, we can clearly see a &beta;-lactam ring with its requisite 4-member square shape containing an amide group (red oxygen, carbon, blue nitrogen motif). So, there's probably enough information in these images for proper classification. In all, we could do some data-cleaning and find better images (ideally we'd just create 224x224 square images exactly instead of downloading high-quality ones from PubChem and then shrinking those). But we're aiming for proof-of-concept more than, say, creating a production model, so let's continue as is.
 {{< figure src="/lec_1_show_batch.png" alt="data.show_batch" class="center_text" >}}
 ```model.py
 learn = cnn_learner(data, models.resnet34, metrics=error_rate)
 learn.fit_one_cycle(4)
 ```
-We're using ResNet 34. Obviosuly we could use 50 or higher, but we'll stick to our goal of proof-of-concept.
+We're using ResNet 34. We could use 50, but we'll stick to our goal of proof-of-concept.
 
 |epoch|	train\_loss|	valid\_loss|	error\_rate|	time|
 |---------|--------|----------|------------|----------|
@@ -176,15 +176,15 @@ interp = ClassificationInterpretation.from_learner(learn)
 interp.plot_top_losses(9, figsize=(15,11), heatmap=True)
 ```
 {{< figure src="/lec_1_top_losses.png" alt="Top losses after 1 iteration" class="center_text" >}}
-In four of the nine images the model seems unduly concerned with whitespace. It's unsurprising to see classification failures in those cases. On the other hand, the misclassified macrolide-aminoglycoside pairings look like they actually belong to both classes. And the calculated worst loss in the top left corner is actually correctly classified by our model as an aminoglycoside (our test data is incorrect in that case). Similarly, the 8th top loss (row 3, col 2) appears to be correctly classified by the mode. We see some trouble with tetracycline classification in two cases. The quinolone/macrolide molecule in the bottom-right has a bizarre structure, another unsurprising misclassification. It's hard to say, at this point, how much a role of orientation and positioning have on our model's prediction-- could we be overfitting based on that? Perhaps better training/test sets would be randomized.
+In four of the nine images the model seems unduly concerned with whitespace. It's unsurprising to see classification failures in those cases. On the other hand, the misclassified macrolide-aminoglycoside pairings look like they actually belong to both classes. And the calculated worst loss in the top left corner is actually correctly classified by our model as an aminoglycoside (our test data is incorrect in that case). Similarly, the 8th top loss (row 3, col 2) appears to be correctly classified by the mode. We see some trouble with tetracycline classification in two cases. The quinolone/macrolide molecule in the bottom-right has a bizarre structure, another unsurprising misclassification.
 
-We've got many things we could test to improve with the input data at this point. It pains me to ignore them and keep moving, but we're going to stick to our goal of showing feasibility and not perfection. Let's refine the model a little bit, and finish things there so we can move on to the next [fast.ai](https://www.fast.ai) lecture.
+Sticking with our goal of showing feasibility and not perfection, let's refine the model a little bit and finish things there so we can move on to the next [fast.ai](https://www.fast.ai) lecture. The author unfroze the model and ran one more cycle with 2 epochs before moving on, getting a substantial decrease in error_rate from 0.12 to 0.07.
 ```model.py
 learn.lr_find()
 learn.recorder.plot()
 ```
 {{< figure src="/lec_1_lr.png" alt="Learning rate loss graph" class="center_text" >}}
-Looks like our loss picks up with learning rates above 1e-3. So let's do a couple more runs with a max LR of 1e-6 to 1e-4. This happens to be the same learning rate chosen by Jeremy Howard during the fast.ai lecture, in which he also started with ResNet-34 to train image data.
+There's no steep decrease in loss for any learning rate, but loss does pick up with learning rates above 1e-3. So let's do a couple more runs with a max LR of 1e-6 to 1e-4. This happens to be the same learning rate chosen by Jeremy Howard during the fast.ai lecture, in which he also started with ResNet-34 to train image data.
 ```model.py
 learn.unfreeze()
 learn.fit_one_cycle(2, max_lr=slice(1e-6,1e-4))
@@ -194,10 +194,10 @@ learn.fit_one_cycle(2, max_lr=slice(1e-6,1e-4))
 |0	|0.281094	|0.270655	|0.073446	|01:15|
 |1|	0.259531	|0.262721	|0.072639	|01:15|
 
-That's an improvement in error rate from before, but it looks like we're leveling out at 7.2ish%. How do our top losses look now?
+That's an improvement in error rate from before, but unsuprising (given our knowledge from the LR plot), our error_rate isn't improving much. Note now that our training loss is below our validation loss. How do our top losses look?
 ```model.py
 interp = ClassificationInterpretation.from_learner(learn)
 interp.plot_top_losses(9, figsize=(15,11), heatmap=True)
 ```
 {{< figure src="/lec_1_top_losses_2nd.png" alt="Final top losses" class="center_text" >}}
-Much better. Again, our worst loss is actually correctly classified by our model and just misclassified in the source data, as are the 4th (row 2, col 1) and 5th (row 2, col 2) top losses. Our heatmaps in the rest fit the molecules exactly-- quite an improvement. We'll stop here, and move on to the next fast.ai lecture.
+Much better. Again, our worst loss is actually correctly classified by our model and just misclassified in the source data, as are the 4th (row 2, col 1) and 5th (row 2, col 2) top losses. Our heatmaps in the rest fit the molecules exactly-- quite an improvement. We could clean up the data, but we'll stop here and move on to the next fast.ai lecture.
